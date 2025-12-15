@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Preguntale</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ff3366">
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #0d0d0d;
+  color: #fff;
+  text-align: center;
+  max-width: 480px;
+  margin-inline: auto;
+}
+
+.hidden { display: none; }
+
+h1, h2 {
+  padding: 10px;
+}
+
+input {
+  width: 90%;
+  max-width: 280px;
+  padding: 10px;
+  margin: 6px;
+  border-radius: 8px;
+  border: none;
+  font-size: 1em;
+}
+
+button {
+  width: 90%;
+  max-width: 320px;
+  padding: 14px;
+  margin: 8px auto;
+  font-size: 1.1em;
+  border: none;
+  border-radius: 10px;
+  background: #ff3366;
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: .5;
+}
+
+.opcion {
+  background: #222;
+}
+
+.opcion.correcta {
+  background: #1e7f3f;
+}
+
+.opcion.incorrecta {
+  background: #9b1c1c;
+}
+
+#temporizador {
+  font-size: 1.4em;
+  margin: 10px;
+}
+
+#barraTiempo {
+  width: 90%;
+  max-width: 320px;
+  height: 12px;
+  background: #444;
+  border-radius: 6px;
+  margin: 8px auto;
+  overflow: hidden;
+}
+
+#barraTiempoInner {
+  height: 100%;
+  background: #ff3366;
+  width: 100%;
+  transition: width 1s linear;
+}
+
+#categoria {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+</style>
+</head>
+
+<body>
+
+   <div id="pantallaLogo">
+  <img src="./image/icon-192.png" alt="QuéTema" style="width:180px; margin:20px auto; display:block;">
+</div>
+
+<!-- INICIO -->
+<div id="inicio">
+  <p>Jugadores</p>
+  <input type="number" id="cantJugadores" min="1">
+  <p>Rondas</p>
+  <input type="number" id="cantRondas" min="1">
+  <button onclick="configurarJugadores()">Continuar</button>
+</div>
+
+<!-- NOMBRES -->
+<div id="jugadores" class="hidden"></div>
+
+<!-- JUEGO -->
+<div id="juego" class="hidden">
+  <h2 id="turno"></h2>
+  <div id="categoria"></div>
+  <div id="temporizador">⏱️ 30</div>
+  <div id="barraTiempo"><div id="barraTiempoInner"></div></div>
+
+  <h2 id="pregunta"></h2>
+  <div id="opciones"></div>
+</div>
+
+<!-- FINAL -->
+<div id="final" class="hidden">
+  <h2 id="tituloFinal">🏆 Resultados</h2>
+  <div id="resultados"></div>
+  <button onclick="reiniciarPartida()">Reiniciar misma partida</button>
+  <button onclick="jugarDeNuevo()">Jugar otra vez</button>
+</div>
+
+<script src="preguntas.js"></script>
+
+<script>
+let jugadores = [];
+let puntos = [];
+let jugadorActual = 0;
+let rondaActual = 1;
+let totalRondas = 0;
+
+let preguntaActual = null;
+let timer = null;
+let tiempo = 30;
+
+let desempate = false;
+let desempateJugadores = [];
+let historialPreguntas = [];
+
+/* ELEMENTOS */
+const inicio = document.getElementById("inicio");
+const jugadoresDiv = document.getElementById("jugadores");
+const juego = document.getElementById("juego");
+const final = document.getElementById("final");
+
+const turno = document.getElementById("turno");
+const preguntaTxt = document.getElementById("pregunta");
+const opcionesDiv = document.getElementById("opciones");
+const temporizador = document.getElementById("temporizador");
+const barraTiempoInner = document.getElementById("barraTiempoInner");
+const categoriaTxt = document.getElementById("categoria");
+const resultadosDiv = document.getElementById("resultados");
+const tituloFinal = document.getElementById("tituloFinal");
+
+/* CONFIG JUGADORES */
+function configurarJugadores() {
+  const cant = +cantJugadores.value;
+  totalRondas = +cantRondas.value;
+
+  inicio.classList.add("hidden");
+  jugadoresDiv.classList.remove("hidden");
+
+  jugadoresDiv.innerHTML = "<h2>Nombres</h2>";
+  for (let i = 0; i < cant; i++) {
+    jugadoresDiv.innerHTML += `<input placeholder="Jugador ${i+1}"><br>`;
+  }
+  jugadoresDiv.innerHTML += `<button onclick="iniciarJuego()">Empezar</button>`;
+}
+
+function iniciarJuego() {
+  jugadores = [];
+  puntos = [];
+  historialPreguntas = [];
+
+  document.querySelectorAll("#jugadores input").forEach(i => {
+    jugadores.push(i.value || "Jugador");
+    puntos.push(0);
+  });
+
+  jugadoresDiv.classList.add("hidden");
+  juego.classList.remove("hidden");
+
+  jugadorActual = 0;
+  rondaActual = 1;
+  desempate = false;
+  desempateJugadores = [];
+
+  siguientePregunta();
+}
+
+/* JUEGO */
+function siguientePregunta() {
+  // Si no quedan rondas normales, iniciar desempate
+  if (!desempate && rondaActual > totalRondas) {
+    iniciarDesempate();
+    return;
+  }
+
+  turno.innerText = desempate
+    ? `⚡ Desempate: ${jugadores[jugadorActual]} ⚡`
+    : `${jugadores[jugadorActual]} — Ronda ${rondaActual}`;
+
+  opcionesDiv.innerHTML = "";
+
+  // Elegir pregunta no repetida
+  let disponibles = PREGUNTAS.filter(p => !historialPreguntas.includes(p));
+  if (disponibles.length === 0) {
+    historialPreguntas = [];
+    disponibles = [...PREGUNTAS];
+  }
+
+  const idx = Math.floor(Math.random() * disponibles.length);
+  preguntaActual = disponibles[idx];
+  historialPreguntas.push(preguntaActual);
+
+  categoriaTxt.innerText = preguntaActual.categoria;
+  preguntaTxt.innerText = preguntaActual.pregunta;
+
+  ["a","b","c"].forEach(letra => {
+    const btn = document.createElement("button");
+    btn.className = "opcion";
+    btn.innerText = preguntaActual["opcion_" + letra];
+    btn.onclick = () => responder(letra, btn);
+    opcionesDiv.appendChild(btn);
+  });
+
+  iniciarTimer();
+}
+
+function iniciarTimer() {
+  tiempo = 30;
+  temporizador.innerText = "⏱️ " + tiempo;
+  barraTiempoInner.style.width = "100%";
+
+  timer = setInterval(() => {
+    tiempo--;
+    temporizador.innerText = "⏱️ " + tiempo;
+    barraTiempoInner.style.width = `${(tiempo/30)*100}%`;
+
+    if (tiempo <= 0) {
+      clearInterval(timer);
+      mostrarCorrecta(null, null);
+    }
+  }, 1000);
+}
+
+function responder(letra, boton) {
+  clearInterval(timer);
+  mostrarCorrecta(letra, boton);
+}
+
+function mostrarCorrecta(letraElegida, botonElegido) {
+  const correcta = preguntaActual.respuesta_correcta;
+
+  document.querySelectorAll(".opcion").forEach(btn => {
+    if (btn.innerText === preguntaActual["opcion_" + correcta]) {
+      btn.classList.add("correcta");
+    }
+  });
+
+  if (letraElegida === correcta) {
+    puntos[jugadorActual]++;
+    if (botonElegido) botonElegido.classList.add("correcta");
+  } else {
+    puntos[jugadorActual]--;
+    if (botonElegido) botonElegido.classList.add("incorrecta");
+  }
+
+  setTimeout(siguienteTurno, 1500);
+}
+
+function siguienteTurno() {
+  if (desempate) {
+    // Mata-mata: turno del siguiente jugador empatado
+    const nextJugador = (jugadorActual + 1) % desempateJugadores.length;
+    if (jugadorActual === 0 && nextJugador === 1) {
+      // Verificar si alguno ganó el desempate
+      if (puntos[0] > puntos[1]) {
+        terminarJuego([desempateJugadores[0]]);
+        return;
+      } else if (puntos[1] > puntos[0]) {
+        terminarJuego([desempateJugadores[1]]);
+        return;
+      }
+      // Ambos igual, seguir mata-mata
+      jugadorActual = nextJugador;
+    } else {
+      jugadorActual = nextJugador;
+    }
+  } else {
+    jugadorActual++;
+    if (jugadorActual >= jugadores.length) {
+      jugadorActual = 0;
+      rondaActual++;
+    }
+  }
+
+  siguientePregunta();
+}
+
+/* DESEMPATE */
+function iniciarDesempate() {
+  const maxPuntos = Math.max(...puntos);
+  const empatados = jugadores.filter((j,i) => puntos[i] === maxPuntos);
+
+  if (empatados.length > 1) {
+    desempate = true;
+    desempateJugadores = empatados;
+    puntos = [0,0]; // solo para dos jugadores en desempate
+    jugadorActual = 0;
+  } else {
+    terminarJuego(empatados);
+  }
+}
+
+/* FINAL */
+function terminarJuego(ganadores = null) {
+  juego.classList.add("hidden");
+  final.classList.remove("hidden");
+
+  resultadosDiv.innerHTML = "";
+
+  if (ganadores && ganadores.length === 1) {
+    resultadosDiv.innerHTML = `<p>🏆 Ganador: ${ganadores[0]} 🏆</p>`;
+  } else {
+    // Ordenar todos los jugadores por puntos
+    const ranking = jugadores.map((j,i) => ({jug: j, pts: puntos[i]}));
+    ranking.sort((a,b) => b.pts - a.pts);
+
+    ranking.forEach(r => {
+      resultadosDiv.innerHTML += `<p>${r.jug}: ${r.pts} pts</p>`;
+    });
+  }
+
+  tituloFinal.innerText = "🏆 Resultados";
+}
+
+/* REINICIAR / NUEVA PARTIDA */
+function reiniciarPartida() {
+  final.classList.add("hidden");
+  juego.classList.remove("hidden");
+
+  puntos = puntos.map(() => 0);
+  jugadorActual = 0;
+  rondaActual = 1;
+  desempate = false;
+  desempateJugadores = [];
+
+  siguientePregunta();
+}
+
+function jugarDeNuevo() {
+  location.reload();
+}
+
+/* SERVICE WORKER */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+}
+</script>
+
+</body>
+</html>
